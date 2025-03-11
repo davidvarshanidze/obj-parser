@@ -1,97 +1,104 @@
+#include <SDL2/SDL.h>
 #include <iostream>
+#include <vector>
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <vector>
 
-struct Face {
-    std::vector<int> vertexIndices;
-    std::vector<int> texCoordIndices;
-    std::vector<int> normalIndices;
+struct Vec3 {
+    float x, y, z;
 };
 
-int main() {
-    std::ifstream file("10370_Bongo_v1_L3.obj");
+struct Face {
+    int v1, v2, v3;
+};
+
+std::vector<Vec3> vertices;
+std::vector<Face> faces;
+
+bool loadOBJ(const std::string& filename) {
+    std::ifstream file(filename);
     if (!file) {
-        std::cerr << "Failed to open obj file" << std::endl;
-        return 1;
+        std::cerr << "Failed to open file: " << filename << std::endl;
+        return false;
     }
 
     std::string line;
-    std::vector<Face> faces;  // Vector to store parsed faces
-    std::vector<std::string> vertices;   // Store vertices (v)
-    std::vector<std::string> texCoords;  // Store texture coords (vt)
-    std::vector<std::string> normals;    // Store normals (vn)
-
     while (std::getline(file, line)) {
         std::istringstream iss(line);
-        std::string prefix;
-        iss >> prefix;
+        std::string type;
+        iss >> type;
 
-        if (prefix == "v") {
-            // Read vertex data
-            std::string vertex;
-            iss >> vertex;
-            vertices.push_back(vertex);  // Store the vertex position
-        } else if (prefix == "vt") {
-            // Read texture coordinate data
-            std::string texCoord;
-            iss >> texCoord;
-            texCoords.push_back(texCoord);  // Store the texture coordinate
-        } else if (prefix == "vn") {
-            // Read normal data
-            std::string normal;
-            iss >> normal;
-            normals.push_back(normal);  // Store the normal vector
-        } else if (prefix == "f") {
-            // Parse faces
+        if (type == "v") {
+            Vec3 vertex;
+            iss >> vertex.x >> vertex.y >> vertex.z;
+            vertices.push_back(vertex);
+        }
+        else if (type == "f") {
             Face face;
-            std::string vertexData;
-            while (iss >> vertexData) {
-                std::istringstream vertexStream(vertexData);
-                std::string vertexIndex, texCoordIndex, normalIndex;
-                
-                // Split by '/' and store the respective indices
-                std::getline(vertexStream, vertexIndex, '/');
-                std::getline(vertexStream, texCoordIndex, '/');
-                std::getline(vertexStream, normalIndex, '/');
-                
-                // Store the parsed indices
-                face.vertexIndices.push_back(std::stoi(vertexIndex));
-                
-                // If texture coordinate exists, store it; otherwise, store -1
-                if (!texCoordIndex.empty()) {
-                    face.texCoordIndices.push_back(std::stoi(texCoordIndex));
-                } else {
-                    face.texCoordIndices.push_back(-1);  // No texture coordinates
-                }
-                
-                // If normal exists, store it; otherwise, store -1
-                if (!normalIndex.empty()) {
-                    face.normalIndices.push_back(std::stoi(normalIndex));
-                } else {
-                    face.normalIndices.push_back(-1);  // No normal
-                }
-            }
-
-            faces.push_back(face);  // Store the parsed face
+            char slash;  // For skipping texture/normal indices (v/vt/vn)
+            int ignore;
+            iss >> face.v1 >> slash >> ignore >> slash >> ignore;
+            iss >> face.v2 >> slash >> ignore >> slash >> ignore;
+            iss >> face.v3 >> slash >> ignore >> slash >> ignore;
+            face.v1--; face.v2--; face.v3--;  // OBJ indices start at 1, C++ arrays at 0
+            faces.push_back(face);
         }
     }
 
     file.close();
+    return true;
+}
 
-    // Output to verify parsing
+// Convert 3D to 2D (simple orthographic projection)
+Vec3 projectTo2D(Vec3 v, int screenWidth, int screenHeight) {
+    float scale = 100.0f;
+    return {
+        v.x * scale + screenWidth / 2,
+        -v.y * scale + screenHeight / 2,
+        v.z
+    };
+}
+
+void drawWireframe(SDL_Renderer* renderer) {
     for (const auto& face : faces) {
-        std::cout << "Face with " << face.vertexIndices.size() << " vertices:" << std::endl;
-        for (size_t i = 0; i < face.vertexIndices.size(); ++i) {
-            std::cout << "Vertex: " << face.vertexIndices[i] << ", ";
-            if (face.texCoordIndices[i] != -1)
-                std::cout << "TexCoord: " << face.texCoordIndices[i] << ", ";
-            if (face.normalIndices[i] != -1)
-                std::cout << "Normal: " << face.normalIndices[i];
-            std::cout << std::endl;
-        }
+        Vec3 v1 = projectTo2D(vertices[face.v1], 800, 600);
+        Vec3 v2 = projectTo2D(vertices[face.v2], 800, 600);
+        Vec3 v3 = projectTo2D(vertices[face.v3], 800, 600);
+
+        SDL_RenderDrawLine(renderer, v1.x, v1.y, v2.x, v2.y);
+        SDL_RenderDrawLine(renderer, v2.x, v2.y, v3.x, v3.y);
+        SDL_RenderDrawLine(renderer, v3.x, v3.y, v1.x, v1.y);
+    }
+}
+
+int main() {
+    if (!loadOBJ("10370_Bongo_v1_L3.obj")) {
+        return 1;
     }
 
+    SDL_Init(SDL_INIT_VIDEO);
+    SDL_Window* window = SDL_CreateWindow("OBJ Renderer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600, SDL_WINDOW_SHOWN);
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+
+    bool running = true;
+    SDL_Event event;
+    while (running) {
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) running = false;
+        }
+
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        drawWireframe(renderer);
+
+        SDL_RenderPresent(renderer);
+    }
+
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
     return 0;
 }
